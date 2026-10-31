@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 ﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Collections.Generic;
@@ -70,8 +71,22 @@ internal class GuardWriter
         _il = _staticConstructor.Body.GetILProcessor();
         _fieldCount = 0;
         _references = references;
-        _fieldGuards = new Dictionary<FieldReference, FieldReference>();
-        _methodGuards = new Dictionary<MethodReference, FieldReference>();
+        _fieldGuards = new Dictionary<FieldReference, FieldReference>(ReferenceComparer.Instance);
+        _methodGuards = new Dictionary<MethodReference, FieldReference>(ReferenceComparer.Instance);
+    }
+
+    /// <summary>
+    /// Compares Cecil references by identity. The default comparer hashes an
+    /// <see cref="OverriddenDeclaringTypeMethod" /> - a base call's target - into a
+    /// malformed dictionary, which surfaces later as a BadImageFormatException.
+    /// </summary>
+    private sealed class ReferenceComparer : IEqualityComparer<MemberReference>
+    {
+        public static readonly ReferenceComparer Instance = new();
+
+        public bool Equals(MemberReference? x, MemberReference? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(MemberReference obj) => RuntimeHelpers.GetHashCode(obj);
     }
 
     /// <summary>
@@ -111,6 +126,52 @@ internal class GuardWriter
         _il.Append(_il.Create(OpCodes.Ldtoken, field));
         _il.Append(_il.Create(OpCodes.Ldtoken, field.DeclaringType));
         _il.Append(_il.Create(OpCodes.Call, _references.CanAccess));
+        _il.Append(_il.Create(OpCodes.Stsfld, result));
+        return result;
+    }
+
+    /// <summary>
+    /// Gets the guard flag for whether a base-callable method is on the policy, asked of
+    /// the declared member rather than late-bound to an override.
+    /// </summary>
+    /// <param name="method">The method being called.</param>
+    /// <returns>The guard flag that will indicate whether the method is accessible.</returns>
+    public FieldReference GetAccessConstant(MethodReference method)
+    {
+        // Emit the token for an open method on an open type: ldtoken on a member still
+        // carrying a generic parameter does not verify, and the metadata token is shared
+        // by every instantiation anyway.
+        method = method.GetElementMethod();
+        if (method.DeclaringType is GenericInstanceType generic)
+        {
+            var open = new MethodReference(method.Name, method.ReturnType, generic.ElementType)
+            {
+                HasThis = method.HasThis,
+                ExplicitThis = method.ExplicitThis,
+                CallingConvention = method.CallingConvention
+            };
+
+            foreach (var parameter in method.Parameters)
+                open.Parameters.Add(new ParameterDefinition(parameter.ParameterType));
+            var constructed = new GenericInstanceType(generic.ElementType);
+            foreach (var argument in generic.GenericArguments)
+                constructed.GenericArguments.Add(argument);
+
+            open.DeclaringType = constructed;
+
+            method = open;
+        }
+
+        if (_methodGuards.TryGetValue(method, out FieldReference? existing))
+        {
+            return existing;
+        }
+
+        var result = AddGuardField(method);
+        _methodGuards.Add(method, result);
+        _il.Append(_il.Create(OpCodes.Ldtoken, method));
+        _il.Append(_il.Create(OpCodes.Ldtoken, method.DeclaringType));
+        _il.Append(_il.Create(OpCodes.Call, _references.CanCallDeclared));
         _il.Append(_il.Create(OpCodes.Stsfld, result));
         return result;
     }

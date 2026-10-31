@@ -1,4 +1,4 @@
-﻿using Mono.Cecil;
+using Mono.Cecil;
 using System.Collections.Immutable;
 
 namespace DouglasDwyer.CasCore;
@@ -22,6 +22,11 @@ internal class ImportedReferences
     /// Determines whether a method can always be called.
     /// </summary>
     public required MethodReference CanCallAlways;
+
+    /// <summary>
+    /// Determines whether the declared member of a base call is accessible.
+    /// </summary>
+    public required MethodReference CanCallDeclared;
 
     /// <summary>
     /// The runtime check for a field access.

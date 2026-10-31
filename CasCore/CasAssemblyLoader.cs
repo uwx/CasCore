@@ -1,4 +1,4 @@
-﻿using CasCore;
+using CasCore;
 using DouglasDwyer.JitIlVerification;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -119,6 +119,25 @@ public class CasAssemblyLoader : VerifiableAssemblyLoader
     public static bool CanCallAlways(RuntimeMethodHandle handle, RuntimeTypeHandle type)
     {
         return CanCallAlways(Assembly.GetCallingAssembly(), MethodBase.GetMethodFromHandle(handle, type)!);
+    }
+
+    /// <summary>
+    /// Determines whether the calling assembly may call the specified method as declared,
+    /// without dispatching to an override.
+    /// </summary>
+    /// <param name="handle">The method handle.</param>
+    /// <param name="type">The type handle on which the method is declared.</param>
+    /// <returns>Whether the method is callable.</returns>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static bool CanCallDeclared(RuntimeMethodHandle handle, RuntimeTypeHandle type)
+    {
+        var method = MethodBase.GetMethodFromHandle(handle, type)!;
+        if (_assemblyLoaders.TryGetValue(Assembly.GetCallingAssembly(), out CasAssemblyLoader? loader))
+        {
+            return SameAssemblyLoader(loader, method) || loader._policy.CanAccess(method);
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -562,6 +581,15 @@ public class CasAssemblyLoader : VerifiableAssemblyLoader
         {
             PatchVirtualMethod(rewriter, guardWriter, target, references);
         }
+        else if (rewriter.Instruction.OpCode.Code == Code.Call && target.HasThis
+                 && target.DeclaringType.Resolve() is { IsValueType: false })
+        {
+            // A non-virtual call to an instance method is a base call (`base.Foo()`), which
+            // only ever runs the declared implementation - nothing can override into it - so
+            // the policy's answer is final. Upstream sends these through the static path,
+            // whose guard refuses every overridable method, which rejected all base calls.
+            PatchBaseMethod(rewriter, guardWriter, target, references);
+        }
         else
         {
             PatchStaticMethod(rewriter, guardWriter, target, references);
@@ -615,6 +643,31 @@ public class CasAssemblyLoader : VerifiableAssemblyLoader
             rewriter.Insert(Instruction.Create(OpCodes.Ldloc, local));
         }
 
+        rewriter.Insert(branchTarget);
+    }
+
+    /// <summary>
+    /// Inserts a runtime access check before a base method call, which cannot be overridden.
+    /// </summary>
+    /// <remarks>
+    /// The declared member is the one that runs, so it is looked up directly. Upstream
+    /// late-binds every access check on a virtual member to its runtime override, which is
+    /// both wrong here - a base call never dispatches - and unverifiable when the override
+    /// lives in the sandboxed assembly itself.
+    /// </remarks>
+    /// <param name="rewriter">The method instrumentor.</param>
+    /// <param name="guardWriter">The object to use for generating guard access fields.</param>
+    /// <param name="target">The target method being called.</param>
+    /// <param name="references">The external references.</param>
+    private void PatchBaseMethod(MethodBodyRewriter rewriter, GuardWriter guardWriter, MethodReference target, ImportedReferences references)
+    {
+        var accessConstant = guardWriter.GetAccessConstant(target);
+        rewriter.Insert(Instruction.Create(OpCodes.Ldsfld, accessConstant));
+        var branchTarget = Instruction.Create(OpCodes.Nop);
+        rewriter.Insert(Instruction.Create(OpCodes.Brtrue, branchTarget));
+        rewriter.Insert(Instruction.Create(OpCodes.Ldtoken, target));
+        rewriter.Insert(Instruction.Create(OpCodes.Ldtoken, rewriter.Method.Module.ImportReference(target.DeclaringType)));
+        rewriter.Insert(Instruction.Create(OpCodes.Call, references.InvokeViolationHandler));
         rewriter.Insert(branchTarget);
     }
 
@@ -731,6 +784,7 @@ public class CasAssemblyLoader : VerifiableAssemblyLoader
             BoolType = module.ImportReference(typeof(bool)),
             CanAccess = module.ImportReference(typeof(CasAssemblyLoader).GetMethod(nameof(CanAccess))),
             CanCallAlways = module.ImportReference(typeof(CasAssemblyLoader).GetMethod(nameof(CanCallAlways))),
+            CanCallDeclared = module.ImportReference(typeof(CasAssemblyLoader).GetMethod(nameof(CanCallDeclared))),
             ObjectType = module.ImportReference(typeof(object)),
             VoidType = module.ImportReference(typeof(void)),
         };
