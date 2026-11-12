@@ -491,6 +491,7 @@ public static class CasPolicyBuilderExtensions
     public static CasPolicyBuilder WithSandboxedSystem(this CasPolicyBuilder builder)
     {
         builder = builder
+            .AllowArrayMembers()
             .Allow(new TypeBinding(typeof(System.Array), Accessibility.Protected))
             .Allow(new TypeBinding(typeof(System.Attribute), Accessibility.Protected))
             .Allow(new TypeBinding(typeof(System.BadImageFormatException), Accessibility.Protected))

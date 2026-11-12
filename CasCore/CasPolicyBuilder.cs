@@ -14,6 +14,11 @@ public sealed class CasPolicyBuilder
     private readonly HashSet<MemberId> _accessibleMembers;
 
     /// <summary>
+    /// Whether the intrinsic members of array types may be called.
+    /// </summary>
+    private bool _allowArrayMembers;
+
+    /// <summary>
     /// Creates a new policy builder. By default, all access to external APIs is denied.
     /// </summary>
     public CasPolicyBuilder()
@@ -27,7 +32,22 @@ public sealed class CasPolicyBuilder
     /// <returns>The policy that was generated.</returns>
     public CasPolicy Build()
     {
-        return new CasPolicy(_accessibleMembers.ToImmutableHashSet());
+        return new CasPolicy(_accessibleMembers.ToImmutableHashSet(), _allowArrayMembers);
+    }
+
+    /// <summary>
+    /// Allows array construction and element access for every array type.
+    /// </summary>
+    /// <remarks>
+    /// Array types expose a fixed set of intrinsic members (<c>.ctor</c>, <c>Get</c>, <c>Set</c>, <c>Address</c>)
+    /// that all report the same metadata token, so they cannot be selected by <see cref="MemberId"/> and are
+    /// switched on wholesale instead. The members perform no work the runtime does not already bounds-check.
+    /// </remarks>
+    /// <returns>This builder, with array members allowed.</returns>
+    public CasPolicyBuilder AllowArrayMembers()
+    {
+        _allowArrayMembers = true;
+        return this;
     }
 
     /// <summary>
