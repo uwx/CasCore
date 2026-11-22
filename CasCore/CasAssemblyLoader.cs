@@ -581,13 +581,17 @@ public class CasAssemblyLoader : VerifiableAssemblyLoader
         {
             PatchVirtualMethod(rewriter, guardWriter, target, references);
         }
-        else if (rewriter.Instruction.OpCode.Code == Code.Call && target.HasThis
-                 && target.DeclaringType.Resolve() is { IsValueType: false })
+        else if (rewriter.Instruction.OpCode.Code == Code.Call && target.HasThis)
         {
-            // A non-virtual call to an instance method is a base call (`base.Foo()`), which
-            // only ever runs the declared implementation - nothing can override into it - so
-            // the policy's answer is final. Upstream sends these through the static path,
-            // whose guard refuses every overridable method, which rejected all base calls.
+            // A non-virtual call to an instance method is a base call (`base.Foo()`) or a
+            // struct's own method; `call` never dispatches, so only the declared
+            // implementation runs and the policy's answer is final. Upstream sends these
+            // through the static path, whose guard refuses every overridable method, which
+            // rejected all base calls.
+            //
+            // Deliberately not asking `target.DeclaringType.Resolve()` whether this is a
+            // value type: that one lookup made every instrumentation need the host's
+            // assemblies on disk, which a single-file or browser build does not have.
             PatchBaseMethod(rewriter, guardWriter, target, references);
         }
         else

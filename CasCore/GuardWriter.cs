@@ -141,25 +141,14 @@ internal class GuardWriter
         // Emit the token for an open method on an open type: ldtoken on a member still
         // carrying a generic parameter does not verify, and the metadata token is shared
         // by every instantiation anyway.
-        method = method.GetElementMethod();
-        if (method.DeclaringType is GenericInstanceType generic)
+        if (method.ContainsGenericParameter)
         {
-            var open = new MethodReference(method.Name, method.ReturnType, generic.ElementType)
+            method = method.GetElementMethod();
+
+            if (method.DeclaringType is GenericInstanceType git)
             {
-                HasThis = method.HasThis,
-                ExplicitThis = method.ExplicitThis,
-                CallingConvention = method.CallingConvention
-            };
-
-            foreach (var parameter in method.Parameters)
-                open.Parameters.Add(new ParameterDefinition(parameter.ParameterType));
-            var constructed = new GenericInstanceType(generic.ElementType);
-            foreach (var argument in generic.GenericArguments)
-                constructed.GenericArguments.Add(argument);
-
-            open.DeclaringType = constructed;
-
-            method = open;
+                method = new OverriddenDeclaringTypeMethod(method, git.ElementType);
+            }
         }
 
         if (_methodGuards.TryGetValue(method, out FieldReference? existing))
