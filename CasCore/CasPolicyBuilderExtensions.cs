@@ -3038,6 +3038,22 @@ public static class CasPolicyBuilderExtensions
     }
 
     /// <summary>
+    /// Admits a type the compiler names internally, which only exists on some runtimes.
+    /// Mono has no <c>System.SZArrayHelper</c> at all, so admitting a name that is absent
+    /// must not fail the whole default sandbox.
+    /// </summary>
+    private static CasPolicyBuilder AllowIfPresent(this CasPolicyBuilder builder, string typeName,
+        Accessibility accessibility, Func<MemberInfo, bool>? filter = null)
+    {
+        var type = Type.GetType(typeName);
+        if (type is null)
+            return builder;
+
+        IEnumerable<MemberInfo> members = new TypeBinding(type, accessibility);
+        return builder.Allow(filter is null ? members : members.Where(filter));
+    }
+
+    /// <summary>
     /// Adds all safe members from the runtime reflection system, such as <c>System.RuntimeType</c>.
     /// </summary>
     /// <param name="builder">The builder to which members should be added.</param>
@@ -3059,8 +3075,7 @@ public static class CasPolicyBuilderExtensions
             .Allow(new TypeBinding(Type.GetType("System.Reflection.RuntimePropertyInfo")!, Accessibility.Public)
                 .Where(x => x.Name != "GetValue" && x.Name != "SetValue"))
             .Allow(new TypeBinding(Type.GetType("System.Reflection.RuntimeParameterInfo")!, Accessibility.Public))
-            .Allow(new TypeBinding(Type.GetType("System.SZArrayHelper")!, Accessibility.Private)
-                .Where(x => x is not ConstructorInfo))
+            .AllowIfPresent("System.SZArrayHelper", Accessibility.Private, x => x is not ConstructorInfo)
             .Allow(new TypeBinding(Type.GetType("System.SZGenericArrayEnumeratorBase")!, Accessibility.Public))
             .Allow(new TypeBinding(Type.GetType("System.SZGenericArrayEnumerator`1")!, Accessibility.Public));
     }
